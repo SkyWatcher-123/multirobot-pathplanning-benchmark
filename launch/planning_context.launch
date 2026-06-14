@@ -1,0 +1,19 @@
+<launch>
+  <!-- Load the robot description (URDF), semantic description (SRDF) and the
+       MoveIt kinematics/joint-limit parameters onto the parameter server.
+       For your own robot, point these at your URDF/SRDF (xacro works too). -->
+
+  <arg name="robot_description" default="$(find mrmg_moveit_planning)/urdf/demo_two_planar_arms.urdf"/>
+  <arg name="semantic_description" default="$(find mrmg_moveit_planning)/config/demo.srdf"/>
+
+  <param name="robot_description" textfile="$(arg robot_description)"/>
+  <param name="robot_description_semantic" textfile="$(arg semantic_description)"/>
+
+  <group ns="robot_description_kinematics">
+    <rosparam command="load" file="$(find mrmg_moveit_planning)/config/kinematics.yaml"/>
+  </group>
+
+  <group ns="robot_description_planning">
+    <rosparam command="load" file="$(find mrmg_moveit_planning)/config/joint_limits.yaml"/>
+  </group>
+</launch>

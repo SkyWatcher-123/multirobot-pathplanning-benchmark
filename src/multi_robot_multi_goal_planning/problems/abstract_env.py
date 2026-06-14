@@ -279,6 +279,23 @@ class AbstractEnvironment(BaseProblem):
 
         return True
 
+    def is_collision_free_for_robot(
+        self,
+        r,
+        q,
+        m=None,
+        collision_tolerance: Optional[float] = None,
+        set_mode: bool = True,
+    ) -> bool:
+        # The abstract environment has no per-robot scene graph, so a per-robot
+        # query reduces to a whole-configuration collision check. (Used by the
+        # planners' mode validation.)
+        if isinstance(q, Configuration):
+            cfg = q
+        else:
+            cfg = self.start_pos.from_flat(np.asarray(q, dtype=float))
+        return self.is_collision_free(cfg, m)
+
     def _batch_is_collision_free(self, qs: List[Configuration], mode: List[int]):
         num_agents = qs[0].num_agents()
         for i in range(num_agents):

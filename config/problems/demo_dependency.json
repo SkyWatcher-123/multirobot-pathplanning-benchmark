@@ -1,0 +1,65 @@
+{
+  "name": "moveit_demo_dependency",
+  "base_frame": "world",
+  "velocity": 0.25,
+  "mode_logic": "dependency",
+  "collision": {
+    "tolerance": 0.0,
+    "resolution": 0.05
+  },
+  "robots": [
+    {
+      "name": "a1",
+      "group": "arm_1",
+      "joints": ["a1_x", "a1_y"],
+      "start": [-0.8, 0.0],
+      "limits": [[-2.0, -2.0], [2.0, 2.0]]
+    },
+    {
+      "name": "a2",
+      "group": "arm_2",
+      "joints": ["a2_x", "a2_y"],
+      "start": [0.8, 0.0],
+      "limits": [[-2.0, -2.0], [2.0, 2.0]]
+    }
+  ],
+  "collision_objects": [
+    {
+      "id": "center_obstacle",
+      "mesh": "package://mrmg_moveit_planning/meshes/demo/center_box.stl",
+      "frame": "world",
+      "pose": {
+        "position": [0.0, 0.0, 0.0],
+        "orientation": [0.0, 0.0, 0.0, 1.0]
+      },
+      "scale": [1.0, 1.0, 1.0]
+    }
+  ],
+  "tasks": [
+    {
+      "name": "a1_goal",
+      "robots": ["a1"],
+      "goal": {"type": "single", "config": [0.8, 0.6]}
+    },
+    {
+      "name": "a2_goal_0",
+      "robots": ["a2"],
+      "goal": {"type": "single", "config": [0.0, 0.8]}
+    },
+    {
+      "name": "a2_goal_1",
+      "robots": ["a2"],
+      "goal": {"type": "single", "config": [-0.8, 0.6]}
+    },
+    {
+      "name": "terminal",
+      "robots": ["a1", "a2"],
+      "goal": {"type": "single", "config": [0.8, 0.6, -0.8, 0.6]}
+    }
+  ],
+  "dependencies": [
+    ["a2_goal_1", "a2_goal_0"],
+    ["terminal", "a1_goal"],
+    ["terminal", "a2_goal_1"]
+  ]
+}

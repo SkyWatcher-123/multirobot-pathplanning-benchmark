@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""rosrun entry point: plan a MoveIt problem and replay it in RViz."""
+from multi_robot_multi_goal_planning.ros.plan_node import main
+
+if __name__ == "__main__":
+    main()

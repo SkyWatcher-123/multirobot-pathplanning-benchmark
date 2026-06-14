@@ -1,0 +1,8 @@
+<launch>
+  <!-- RViz with the MoveIt MotionPlanning / Trajectory displays. The
+       MotionPlanning display listens on /move_group/display_planned_path, which
+       is exactly what the benchmark publishes, so planned multi-robot paths
+       animate here. -->
+  <arg name="rviz_config" default="$(find mrmg_moveit_planning)/rviz/moveit.rviz"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_config)" output="screen"/>
+</launch>

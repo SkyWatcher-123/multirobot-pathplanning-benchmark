@@ -1,0 +1,10 @@
+<launch>
+  <!-- One-shot demo bring-up: move_group + RViz for the demo two-arm robot.
+       After this is up, run the planner with:
+         roslaunch mrmg_moveit_planning plan.launch
+       or replay a saved trajectory with:
+         roslaunch mrmg_moveit_planning replay.launch file:=/path/to/traj.json
+  -->
+  <include file="$(find mrmg_moveit_planning)/launch/move_group.launch"/>
+  <include file="$(find mrmg_moveit_planning)/launch/moveit_rviz.launch"/>
+</launch>

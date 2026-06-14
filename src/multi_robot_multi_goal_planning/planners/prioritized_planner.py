@@ -36,7 +36,17 @@ from .termination_conditions import (
     RuntimeTerminationCondition,
 )
 from .shortcutting import robot_mode_shortcut
-from multi_robot_multi_goal_planning.problems.rai_envs import rai_env
+
+# rai (`robotic`) is an optional backend. `rai_env` is only used here for an
+# isinstance check and a type hint, so fall back to a placeholder class when rai
+# is not installed (no rai env can exist in that case anyway). This keeps the
+# planners importable in a ROS1 / MoveIt deployment without rai.
+try:
+    from multi_robot_multi_goal_planning.problems.rai_envs import rai_env
+except ImportError:  # pragma: no cover - exercised only without rai installed
+    class rai_env:  # type: ignore
+        """Placeholder used when the optional rai backend is unavailable."""
+        pass
 from multi_robot_multi_goal_planning.problems.configuration import (
     Configuration,
     batch_config_dist,

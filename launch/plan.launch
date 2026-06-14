@@ -1,0 +1,34 @@
+<launch>
+  <!-- Run a benchmark planner on a MoveIt problem and replay it in RViz.
+       Assumes move_group is already running (e.g. via demo.launch). -->
+
+  <!-- Either point at a problem spec (provided dependency graph + robots +
+       mesh objects)... -->
+  <arg name="problem_spec" default="$(find mrmg_moveit_planning)/config/problems/demo_dependency.json"/>
+  <!-- ...or use a registered env name instead (leave problem_spec empty then). -->
+  <arg name="env_name" default=""/>
+
+  <arg name="planner" default="rrt_star"/>   <!-- rrt_star | birrt_star | composite_prm | aitstar | eitstar -->
+  <arg name="max_time" default="10.0"/>
+  <arg name="seed" default="1"/>
+  <arg name="check_group" default=""/>       <!-- "" = whole robot; or "both_arms" -->
+  <arg name="optimize" default="false"/>
+  <arg name="shortcut" default="true"/>
+  <arg name="output" default="$(env HOME)/mrmg_last_trajectory.json"/>
+  <arg name="replay" default="true"/>
+  <arg name="num_replays" default="3"/>
+
+  <node name="mrmg_plan_node" pkg="mrmg_moveit_planning" type="mrmg_plan_node" output="screen">
+    <param name="problem_spec" value="$(arg problem_spec)"/>
+    <param name="env_name" value="$(arg env_name)"/>
+    <param name="planner" value="$(arg planner)"/>
+    <param name="max_time" value="$(arg max_time)"/>
+    <param name="seed" value="$(arg seed)"/>
+    <param name="check_group" value="$(arg check_group)"/>
+    <param name="optimize" value="$(arg optimize)"/>
+    <param name="shortcut" value="$(arg shortcut)"/>
+    <param name="output" value="$(arg output)"/>
+    <param name="replay" value="$(arg replay)"/>
+    <param name="num_replays" value="$(arg num_replays)"/>
+  </node>
+</launch>

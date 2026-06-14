@@ -1,0 +1,8 @@
+# Velocity/acceleration limits used by MoveIt for time parameterization.
+# (The benchmark also applies its own constant max-speed time scaling when
+# building the DisplayTrajectory; see ros/trajectory_conversion.py.)
+joint_limits:
+  a1_x: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}
+  a1_y: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}
+  a2_x: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}
+  a2_y: {has_velocity_limits: true, max_velocity: 1.0, has_acceleration_limits: true, max_acceleration: 1.0}

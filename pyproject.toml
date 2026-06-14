@@ -24,6 +24,10 @@ pinocchio = ["pin>=3.4" , "meshcat"]
 rai = ["robotic>=0.2.2,<0.3.0"]
 mujoco = ["mujoco", "mujoco-mjx"]
 viser = ["viser"]
+# ROS1 / MoveIt backend. The ROS Python packages (rospy, moveit_commander,
+# moveit_msgs, ...) are provided by the ROS installation / catkin workspace, not
+# pip; PyYAML is only needed for YAML problem specs (JSON works without it).
+ros = ["pyyaml"]
 all = ["pin>=3.4", "meshcat", "robotic>=0.2.2,<0.3.0", "mujoco", "mujoco-mjx"]
 
 [tool.setuptools]
@@ -39,6 +43,11 @@ version = {attr = "multi_robot_multi_goal_planning.__version__"}
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/multi_robot_multi_goal_planning"]
+
+# Ship the bundled MoveIt demo problem spec so the registered `moveit.demo_*`
+# environments resolve their spec file in wheel installs as well.
+[tool.hatch.build.targets.wheel.force-include]
+"src/multi_robot_multi_goal_planning/assets/desc/moveit_demo_dependency.json" = "multi_robot_multi_goal_planning/assets/desc/moveit_demo_dependency.json"
 
 [tool.hatch.build]
 only-packages = true

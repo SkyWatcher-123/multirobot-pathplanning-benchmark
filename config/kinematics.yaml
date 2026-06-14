@@ -1,0 +1,11 @@
+# Kinematics solvers for the demo groups. The benchmark plans in joint space and
+# does not require IK, but move_group loads a solver per chain group. KDL is fine
+# for these simple prismatic chains.
+arm_1:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.05
+arm_2:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver_search_resolution: 0.005
+  kinematics_solver_timeout: 0.05

@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>mrmg_moveit_planning</name>
+  <version>0.1.0</version>
+  <description>
+    Multi-robot multi-goal sampling-based motion planning for ROS1 Noetic + MoveIt.
+    Wraps the backend-agnostic benchmark planners (RRT*, BiRRT*, PRM, AIT*, EIT*)
+    so they plan against a MoveIt planning scene (mesh collision objects, robots
+    from URDF/SRDF) using the /check_state_validity collision checker, and replays
+    the resulting multi-modal plan in MoveIt RViz. Tasks are ordered by a
+    dependency graph. The planner is independent of MoveIt's OMPL pipeline.
+  </description>
+
+  <maintainer email="jwei3@andrew.cmu.edu">mrmg maintainer</maintainer>
+  <license>MIT</license>
+  <url type="website">https://vhartmann.com/mrmg-planning/</url>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- Python runtime + MoveIt -->
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>moveit_commander</exec_depend>
+  <exec_depend>moveit_core</exec_depend>
+  <exec_depend>moveit_ros_planning_interface</exec_depend>
+  <exec_depend>moveit_ros_visualization</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <!-- Robot/scene description + visualization -->
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>rviz</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- Python libraries pulled in via rosdep / pip (see pyproject.toml) -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-networkx</exec_depend>
+
+  <export>
+    <build_type>catkin</build_type>
+  </export>
+</package>

@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<!--
+  Semantic robot description for the demo two-planar-arm robot.
+  Groups and joints match config/problems/demo_dependency.json:
+    arm_1 -> a1_x, a1_y   arm_2 -> a2_x, a2_y
+  "both_arms" is the combined group used as the whole-robot collision group.
+-->
+<robot name="demo_two_planar_arms">
+
+  <!-- Pin the robot root to the planning frame "world". -->
+  <virtual_joint name="fixed_base" type="fixed" parent_frame="world" child_link="base_link"/>
+
+  <group name="arm_1">
+    <joint name="a1_x"/>
+    <joint name="a1_y"/>
+  </group>
+
+  <group name="arm_2">
+    <joint name="a2_x"/>
+    <joint name="a2_y"/>
+  </group>
+
+  <!-- Whole-robot group: pass `check_group: both_arms` to the planner node if
+       your MoveIt build requires a non-empty group for /check_state_validity. -->
+  <group name="both_arms">
+    <group name="arm_1"/>
+    <group name="arm_2"/>
+  </group>
+
+  <group_state name="home" group="both_arms">
+    <joint name="a1_x" value="-0.8"/>
+    <joint name="a1_y" value="0.0"/>
+    <joint name="a2_x" value="0.8"/>
+    <joint name="a2_y" value="0.0"/>
+  </group_state>
+
+  <end_effector name="a1_ee" parent_link="a1_y_link" group="arm_1"/>
+  <end_effector name="a2_ee" parent_link="a2_y_link" group="arm_2"/>
+
+  <!-- The empty links carry no collision geometry; disable the trivial pairs.
+       a1_y_link vs a2_y_link is intentionally left ENABLED so the two robots
+       collide with each other. -->
+  <disable_collisions link1="base_link" link2="a1_y_link" reason="Adjacent"/>
+  <disable_collisions link1="base_link" link2="a2_y_link" reason="Adjacent"/>
+</robot>

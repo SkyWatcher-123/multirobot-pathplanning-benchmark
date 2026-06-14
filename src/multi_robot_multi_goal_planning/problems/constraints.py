@@ -9,7 +9,15 @@ from numpy.typing import NDArray
 from .configuration import Configuration
 
 # from .rai_base_env import rai_env
-import robotic
+# `robotic` (rai) is only used by the rai-specific constraint classes below
+# (inside their F/J/is_fulfilled methods). Import it lazily so the planning core
+# and the non-rai backends (e.g. the MoveIt backend) can be used without rai
+# installed. The rai constraint classes are only ever instantiated in rai envs,
+# where `robotic` is available.
+try:
+    import robotic  # type: ignore
+except ImportError:  # pragma: no cover - exercised only without rai installed
+    robotic = None  # type: ignore
 
 class Constraint(ABC):
     @abstractmethod

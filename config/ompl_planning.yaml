@@ -1,0 +1,20 @@
+# Minimal OMPL planner configuration. NOTE: the benchmark planners (RRT*, BiRRT*,
+# PRM, AIT*, EIT*) do NOT use this pipeline -- it is only here so the `move_group`
+# node starts cleanly and exposes /check_state_validity and the planning scene.
+planner_configs:
+  RRTConnectkConfigDefault:
+    type: geometric::RRTConnect
+    range: 0.0
+
+arm_1:
+  default_planner_config: RRTConnectkConfigDefault
+  planner_configs:
+    - RRTConnectkConfigDefault
+arm_2:
+  default_planner_config: RRTConnectkConfigDefault
+  planner_configs:
+    - RRTConnectkConfigDefault
+both_arms:
+  default_planner_config: RRTConnectkConfigDefault
+  planner_configs:
+    - RRTConnectkConfigDefault

@@ -1,0 +1,66 @@
+{
+  "__doc__": [
+    "Problem specification template for the MoveIt backend. Copy this file, fill",
+    "in your robots/tasks/mesh-objects/dependency-graph, and pass it to the",
+    "planner node via the `problem_spec` parameter (see launch/template_robot.launch).",
+    "",
+    "Conventions:",
+    " - A robot's `joints` are its actuated joints in order; the configuration and",
+    "   all goal configs are these joints concatenated across robots in list order.",
+    " - A task `goal.config` lives in the joint space of that task's `robots`,",
+    "   concatenated in the order they appear in `robots`.",
+    " - `collision_objects` are meshes (package:// or file path) added to the",
+    "   MoveIt planning scene for collision checking and RViz.",
+    " - `dependencies` is the task dependency graph: each [A, B] means 'A depends",
+    "   on B' (B must be completed before A). Exactly one task must be a leaf",
+    "   (nothing depends on it) -- conventionally named 'terminal'.",
+    " - `limits` per robot is optional; omit to read joint limits from the URDF on",
+    "   the parameter server at runtime."
+  ],
+  "name": "my_problem",
+  "base_frame": "world",
+  "velocity": 0.25,
+  "mode_logic": "dependency",
+  "collision": {"tolerance": 0.0, "resolution": 0.05},
+
+  "robots": [
+    {
+      "name": "robot_a",
+      "group": "panda_1",
+      "joints": ["pa_joint1", "pa_joint2", "pa_joint3", "pa_joint4", "pa_joint5", "pa_joint6", "pa_joint7"],
+      "start": [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    },
+    {
+      "name": "robot_b",
+      "group": "panda_2",
+      "joints": ["pb_joint1", "pb_joint2", "pb_joint3", "pb_joint4", "pb_joint5", "pb_joint6", "pb_joint7"],
+      "start": [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    }
+  ],
+
+  "collision_objects": [
+    {
+      "id": "table",
+      "mesh": "package://my_robot_description/meshes/table.stl",
+      "frame": "world",
+      "pose": {"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]},
+      "scale": [1.0, 1.0, 1.0]
+    }
+  ],
+
+  "tasks": [
+    {"name": "a_goal", "robots": ["robot_a"],
+     "goal": {"type": "single", "config": [0.5, -0.3, 0.0, -2.0, 0.0, 1.7, 0.8]}},
+    {"name": "b_goal", "robots": ["robot_b"],
+     "goal": {"type": "single", "config": [-0.5, -0.3, 0.0, -2.0, 0.0, 1.7, 0.8]}},
+    {"name": "terminal", "robots": ["robot_a", "robot_b"],
+     "goal": {"type": "single",
+              "config": [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785,
+                         0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]}}
+  ],
+
+  "dependencies": [
+    ["terminal", "a_goal"],
+    ["terminal", "b_goal"]
+  ]
+}

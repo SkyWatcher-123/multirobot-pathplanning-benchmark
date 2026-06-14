@@ -5,6 +5,15 @@ There are also some utilities for visualizing plans, and plotting convergence an
 
 The corresponding paper can be found [here](https://arxiv.org/abs/2503.03509), and more videos can be seen on the [paper website](https://vhartmann.com/mrmg-planning/).
 
+# ROS1 Noetic + MoveIt
+This repository can also be used as a **ROS1 Noetic catkin package** (`mrmg_moveit_planning`)
+that runs the benchmark planners against a **MoveIt** planning scene (mesh collision
+objects, robots from URDF/SRDF, tasks ordered by a dependency graph) and replays the
+result in **MoveIt RViz**. The planners are unchanged and do **not** use MoveIt's OMPL
+pipeline. See [`README_ROS.md`](README_ROS.md) for build and usage instructions, and try
+the self-contained demo with `roslaunch mrmg_moveit_planning demo.launch` +
+`roslaunch mrmg_moveit_planning plan.launch`.
+
 # Installation
 Most of the problems we propose here are originally built on top of [rai](https://marctoussaint.github.io/robotic/index.html) ([github](https://github.com/MarcToussaint/robotic)). We would recommend using the virtual environment of your choice to make sure nothing break with rai.
 

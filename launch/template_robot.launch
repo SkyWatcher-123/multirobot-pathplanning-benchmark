@@ -1,0 +1,31 @@
+<launch>
+  <!-- ====================================================================== -->
+  <!-- TEMPLATE: adapt this for YOUR ROS1 robot(s).                            -->
+  <!--                                                                        -->
+  <!-- Steps:                                                                  -->
+  <!--  1. Generate a MoveIt config for your robot with the MoveIt Setup       -->
+  <!--     Assistant (creates URDF/SRDF, kinematics.yaml, joint_limits.yaml,   -->
+  <!--     move_group.launch, moveit.rviz). For multiple robots, build one     -->
+  <!--     combined URDF that contains all of them.                            -->
+  <!--  2. Write a problem spec (config/problems/template.json) listing each   -->
+  <!--     robot's MoveIt group + ordered joints + start, the mesh collision   -->
+  <!--     objects, the tasks (joint-space goals), and the dependency graph.    -->
+  <!--  3. Launch your robot's move_group + RViz, then this file.              -->
+  <!-- ====================================================================== -->
+
+  <arg name="problem_spec" default="$(find mrmg_moveit_planning)/config/problems/template.json"/>
+  <arg name="planner" default="rrt_star"/>
+  <arg name="max_time" default="30.0"/>
+  <!-- Set to a non-empty SRDF group that spans all robots if your MoveIt build
+       rejects an empty group in /check_state_validity. -->
+  <arg name="check_group" default=""/>
+
+  <node name="mrmg_plan_node" pkg="mrmg_moveit_planning" type="mrmg_plan_node" output="screen">
+    <param name="problem_spec" value="$(arg problem_spec)"/>
+    <param name="planner" value="$(arg planner)"/>
+    <param name="max_time" value="$(arg max_time)"/>
+    <param name="check_group" value="$(arg check_group)"/>
+    <param name="output" value="$(env HOME)/mrmg_last_trajectory.json"/>
+    <param name="replay" value="true"/>
+  </node>
+</launch>

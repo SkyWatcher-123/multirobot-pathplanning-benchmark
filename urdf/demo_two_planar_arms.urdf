@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!--
+  Minimal demo "robot" for the MoveIt backend: two independent planar arms.
+  Each arm is a point that translates in the world XY plane via two prismatic
+  joints (a{i}_x, a{i}_y). The joint names and groups match
+  config/problems/demo_dependency.json so the benchmark dependency-graph problem
+  maps straight onto this robot.
+
+  This is intentionally tiny: it exists so the whole ROS1/MoveIt pipeline
+  (planning scene with a mesh obstacle, /check_state_validity collision checking,
+  a benchmark planner, and RViz replay) runs end-to-end out of the box. For a real
+  robot, drop in your own URDF/SRDF and a matching problem spec (see
+  config/problems/template.json and the README).
+-->
+<robot name="demo_two_planar_arms">
+
+  <material name="grey">  <color rgba="0.6 0.6 0.6 1.0"/></material>
+  <material name="blue">  <color rgba="0.1 0.3 0.9 1.0"/></material>
+  <material name="orange"><color rgba="0.95 0.5 0.1 1.0"/></material>
+
+  <!-- Planning root. The SRDF pins this to the "world" frame via a fixed
+       virtual joint, so joint values equal world XY coordinates. -->
+  <link name="base_link">
+    <visual>
+      <geometry><box size="3.2 3.2 0.02"/></geometry>
+      <origin xyz="0 0 -0.06"/>
+      <material name="grey"/>
+    </visual>
+  </link>
+
+  <!-- ===================== arm 1 ===================== -->
+  <link name="a1_x_link"/>
+  <joint name="a1_x" type="prismatic">
+    <parent link="base_link"/>
+    <child link="a1_x_link"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="50" velocity="1.0"/>
+  </joint>
+
+  <link name="a1_y_link">
+    <visual>
+      <geometry><box size="0.12 0.12 0.12"/></geometry>
+      <material name="blue"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.12 0.12 0.12"/></geometry>
+    </collision>
+  </link>
+  <joint name="a1_y" type="prismatic">
+    <parent link="a1_x_link"/>
+    <child link="a1_y_link"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="50" velocity="1.0"/>
+  </joint>
+
+  <!-- end-effector / attach link for manipulation modes -->
+  <link name="a1_tool"/>
+  <joint name="a1_tool_joint" type="fixed">
+    <parent link="a1_y_link"/>
+    <child link="a1_tool"/>
+    <origin xyz="0 0 0.06"/>
+  </joint>
+
+  <!-- ===================== arm 2 ===================== -->
+  <link name="a2_x_link"/>
+  <joint name="a2_x" type="prismatic">
+    <parent link="base_link"/>
+    <child link="a2_x_link"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="50" velocity="1.0"/>
+  </joint>
+
+  <link name="a2_y_link">
+    <visual>
+      <geometry><box size="0.12 0.12 0.12"/></geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.12 0.12 0.12"/></geometry>
+    </collision>
+  </link>
+  <joint name="a2_y" type="prismatic">
+    <parent link="a2_x_link"/>
+    <child link="a2_y_link"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="50" velocity="1.0"/>
+  </joint>
+
+  <link name="a2_tool"/>
+  <joint name="a2_tool_joint" type="fixed">
+    <parent link="a2_y_link"/>
+    <child link="a2_tool"/>
+    <origin xyz="0 0 0.06"/>
+  </joint>
+
+</robot>

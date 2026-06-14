@@ -1,0 +1,11 @@
+<launch>
+  <!-- Replay a previously exported trajectory JSON in RViz (no re-planning).
+       Assumes move_group + RViz are running (e.g. via demo.launch). -->
+  <arg name="file" default="$(env HOME)/mrmg_last_trajectory.json"/>
+  <arg name="loop" default="true"/>
+
+  <node name="mrmg_replay_node" pkg="mrmg_moveit_planning" type="mrmg_replay_node" output="screen">
+    <param name="file" value="$(arg file)"/>
+    <param name="loop" value="$(arg loop)"/>
+  </node>
+</launch>

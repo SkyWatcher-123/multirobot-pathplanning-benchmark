@@ -1,0 +1,49 @@
+<launch>
+  <!-- Bring up move_group for the demo robot. move_group provides the planning
+       scene and the /check_state_validity service that the benchmark uses for
+       collision checking, and the /move_group/display_planned_path topic that
+       RViz replays. Trajectory execution is disabled (we publish a
+       DisplayTrajectory directly), so no controllers are required. -->
+
+  <arg name="robot_description" default="$(find mrmg_moveit_planning)/urdf/demo_two_planar_arms.urdf"/>
+  <arg name="semantic_description" default="$(find mrmg_moveit_planning)/config/demo.srdf"/>
+
+  <include file="$(find mrmg_moveit_planning)/launch/planning_context.launch">
+    <arg name="robot_description" value="$(arg robot_description)"/>
+    <arg name="semantic_description" value="$(arg semantic_description)"/>
+  </include>
+
+  <!-- Publish joint states and TF so RViz can render the robot. The benchmark
+       drives the displayed robot via DisplayTrajectory; joint_state_publisher
+       just provides a static default state. -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+    <rosparam param="source_list">[]</rosparam>
+  </node>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <node name="move_group" pkg="moveit_ros_move_group" type="move_group"
+        respawn="false" output="screen">
+    <param name="allow_trajectory_execution" value="false"/>
+    <param name="max_safe_path_cost" value="1"/>
+    <param name="capabilities" value="move_group/MoveGroupStateValidationService"/>
+
+    <!-- OMPL planning pipeline (only so move_group starts cleanly; the benchmark
+         planners run in the node, not here). -->
+    <param name="planning_plugin" value="ompl_interface/OMPLPlanner"/>
+    <param name="request_adapters"
+           value="default_planner_request_adapters/AddTimeParameterization
+                  default_planner_request_adapters/FixWorkspaceBounds
+                  default_planner_request_adapters/FixStartStateBounds
+                  default_planner_request_adapters/FixStartStateCollision
+                  default_planner_request_adapters/FixStartStatePathConstraints"/>
+    <param name="start_state_max_bounds_error" value="0.1"/>
+    <rosparam command="load" file="$(find mrmg_moveit_planning)/config/ompl_planning.yaml"/>
+
+    <!-- Planning scene monitor: publish scene + geometry so RViz and the
+         collision checker see the mesh objects we add. -->
+    <param name="planning_scene_monitor/publish_planning_scene" value="true"/>
+    <param name="planning_scene_monitor/publish_geometry_updates" value="true"/>
+    <param name="planning_scene_monitor/publish_state_updates" value="true"/>
+    <param name="planning_scene_monitor/publish_transforms_updates" value="true"/>
+  </node>
+</launch>
