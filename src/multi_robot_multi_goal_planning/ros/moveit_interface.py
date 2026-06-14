@@ -38,13 +38,102 @@ try:  # pragma: no cover - requires a ROS install
     import rospy
     import moveit_commander
     from moveit_msgs.srv import GetStateValidity, GetStateValidityRequest
-    from moveit_msgs.msg import RobotState, AttachedCollisionObject, DisplayTrajectory
+    from moveit_msgs.msg import (
+        RobotState,
+        AttachedCollisionObject,
+        CollisionObject,
+        DisplayTrajectory,
+    )
     from sensor_msgs.msg import JointState
-    from geometry_msgs.msg import Pose, PoseStamped
+    from geometry_msgs.msg import Pose, PoseStamped, Point
+    from shape_msgs.msg import Mesh, MeshTriangle
 
     HAVE_ROS = True
 except ImportError:  # pragma: no cover
     HAVE_ROS = False
+
+
+# --------------------------------------------------------------------------- #
+#  Mesh / attached-object helpers (for grasped movable objects)
+# --------------------------------------------------------------------------- #
+_MESH_MSG_CACHE: dict = {}
+
+
+def make_mesh_msg(filename: str, scale=(1.0, 1.0, 1.0)):
+    """Load a mesh file into a ``shape_msgs/Mesh`` (cached). Requires pyassimp."""
+    _require_ros()
+    key = (filename, tuple(scale))
+    if key in _MESH_MSG_CACHE:
+        return _MESH_MSG_CACHE[key]
+    try:
+        import pyassimp  # type: ignore
+    except ImportError as err:  # pragma: no cover
+        raise ImportError(
+            "pyassimp is required to attach mesh objects (grasped meshes). "
+            "Install python3-pyassimp."
+        ) from err
+
+    scene = pyassimp.load(filename)
+    try:
+        if not scene.meshes:
+            raise ValueError(f"no meshes found in {filename}")
+        m = scene.meshes[0]
+        mesh = Mesh()
+        for face in m.faces:
+            idx = list(face) if not hasattr(face, "indices") else list(face.indices)
+            if len(idx) == 3:
+                tri = MeshTriangle()
+                tri.vertex_indices = [int(idx[0]), int(idx[1]), int(idx[2])]
+                mesh.triangles.append(tri)
+        for v in m.vertices:
+            mesh.vertices.append(
+                Point(x=float(v[0]) * scale[0], y=float(v[1]) * scale[1], z=float(v[2]) * scale[2])
+            )
+    finally:
+        pyassimp.release(scene)
+
+    _MESH_MSG_CACHE[key] = mesh
+    return mesh
+
+
+def _pose_from7(pose7):
+    p = Pose()
+    p.position.x, p.position.y, p.position.z = pose7[0:3]
+    (p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w) = pose7[3:7]
+    return p
+
+
+def build_attached_collision_object(att):
+    """Build a ``moveit_msgs/AttachedCollisionObject`` from an env Attachment.
+
+    ``att`` is a ``multi_robot_multi_goal_planning.problems.moveit_env.Attachment``
+    (or the JSON dict form with the same fields). The mesh is resolved + loaded
+    (cached); the object is parented to ``att.link`` with its relative pose.
+    """
+    _require_ros()
+    from multi_robot_multi_goal_planning.ros.mesh_resolver import resolve_mesh_path
+
+    object_id = att["object_id"] if isinstance(att, dict) else att.object_id
+    link = att["link"] if isinstance(att, dict) else att.link
+    pose = att["pose"] if isinstance(att, dict) else att.pose
+    mesh = att["mesh"] if isinstance(att, dict) else att.mesh
+    scale = att["scale"] if isinstance(att, dict) else att.scale
+    touch_links = att["touch_links"] if isinstance(att, dict) else att.touch_links
+
+    mesh_msg = make_mesh_msg(resolve_mesh_path(mesh), tuple(scale))
+
+    co = CollisionObject()
+    co.id = object_id
+    co.header.frame_id = link
+    co.meshes = [mesh_msg]
+    co.mesh_poses = [_pose_from7(pose)]
+    co.operation = CollisionObject.ADD
+
+    aco = AttachedCollisionObject()
+    aco.link_name = link
+    aco.object = co
+    aco.touch_links = list(touch_links)
+    return aco
 
 
 def _require_ros() -> None:
@@ -148,6 +237,34 @@ class MoveItServiceCollisionChecker(StateValidityChecker):
         self._srv = rospy.ServiceProxy(service, GetStateValidity, persistent=True)
         # Optional hook: callable(mode) -> List[AttachedCollisionObject]
         self.attached_objects_for_mode = None
+        self._attachments_provider = None
+        self._aco_cache: dict = {}
+
+    def enable_attachments(self, attachments_provider) -> None:
+        """Represent movable (graspable) objects as attached collision objects.
+
+        ``attachments_provider`` is ``env.attachments_for_mode``: a callable
+        ``mode -> List[Attachment]`` describing which movable mesh is parented to
+        which link (world anchor when resting, gripper link when held) in that
+        mode. Each is turned into an ``AttachedCollisionObject`` added to the
+        per-check ``RobotState`` (cached by object/link/pose), so the carried mesh
+        participates in collision checking and the world copy never double-counts.
+        """
+        self._attachments_provider = attachments_provider
+        self.attached_objects_for_mode = self._build_attachments
+
+    def _build_attachments(self, mode):
+        if self._attachments_provider is None:
+            return []
+        out = []
+        for att in self._attachments_provider(mode):
+            key = (att.object_id, att.link, tuple(att.pose))
+            aco = self._aco_cache.get(key)
+            if aco is None:
+                aco = build_attached_collision_object(att)
+                self._aco_cache[key] = aco
+            out.append(aco)
+        return out
 
     def is_valid(
         self, joint_names: List[str], positions: NDArray, mode
@@ -199,9 +316,49 @@ class DisplayTrajectoryPublisher:
             build_display_trajectory_msg,
         )
 
-        msg = build_display_trajectory_msg(traj_dict)
+        msg = build_display_trajectory_msg(
+            traj_dict, attachment_builder=build_attached_collision_object
+        )
         self.pub.publish(msg)
         return msg
+
+    def publish_segments(self, traj_dict: Dict, pause_pad: float = 1.0) -> None:
+        """Replay a manipulation plan segment by segment.
+
+        A single DisplayTrajectory shares one start state, so a grasped object
+        could not change attachment mid-trajectory. For manipulation plans we
+        therefore publish one DisplayTrajectory per mode segment, each carrying
+        that segment's attached objects in ``trajectory_start`` -- so the carried
+        mesh follows the gripper and detaches on place in RViz.
+        """
+        from multi_robot_multi_goal_planning.ros.trajectory_conversion import (
+            build_display_trajectory_msg,
+        )
+
+        segments_meta = traj_dict.get("metadata", {}).get("segments", [])
+        for i, rt in enumerate(traj_dict.get("trajectory", [])):
+            if rospy.is_shutdown():
+                return
+            attached = segments_meta[i].get("attached_collision_objects", []) if i < len(segments_meta) else []
+            seg_dict = {
+                "model_id": traj_dict.get("model_id", ""),
+                "trajectory_start": {
+                    "joint_state": {
+                        "name": rt["joint_trajectory"]["joint_names"],
+                        "position": rt["joint_trajectory"]["points"][0]["positions"],
+                    },
+                    "attached_collision_objects": attached,
+                    "is_diff": True,
+                },
+                "trajectory": [rt],
+            }
+            msg = build_display_trajectory_msg(
+                seg_dict, attachment_builder=build_attached_collision_object
+            )
+            self.pub.publish(msg)
+            pts = rt["joint_trajectory"]["points"]
+            dur = float(pts[-1]["time_from_start"]) if pts else 1.0
+            rospy.sleep(max(1.0, dur + pause_pad))
 
     def replay_duration(self, traj_dict: Dict) -> float:
         total = 0.0
@@ -255,12 +412,21 @@ def attach_moveit_runtime(
 
     runtime: Dict = {}
 
-    if add_scene_objects and env.collision_objects:
+    # Only *static* objects go into the world planning scene. Movable (graspable)
+    # objects are represented per-mode as attached collision objects on the
+    # checker, so they are never double-counted as both world geometry and a
+    # grasped object.
+    static_objects = [o for o in env.collision_objects if not getattr(o, "movable", False)]
+    if add_scene_objects and static_objects:
         scene = MoveItSceneManager(base_frame=env.base_frame)
-        scene.add_mesh_objects(env.collision_objects)
+        scene.add_mesh_objects(static_objects)
         runtime["scene"] = scene
 
     checker = MoveItServiceCollisionChecker(group_name=check_group)
+    if getattr(env, "manipulating_env", False):
+        checker.enable_attachments(env.attachments_for_mode)
+        rospy.loginfo("[mrmg] attach/detach enabled for movable objects: %s",
+                      sorted(getattr(env, "movable_objects", set())))
     env.set_validity_checker(checker)
     runtime["checker"] = checker
 
@@ -271,10 +437,14 @@ def attach_moveit_runtime(
             rospy.loginfo("[mrmg] joint sampling limits set from URDF")
 
     publisher = DisplayTrajectoryPublisher()
+    manipulating = getattr(env, "manipulating_env", False)
 
     def _display(path):
         traj = env.to_display_trajectory(path)
-        publisher.publish_dict(traj)
+        if manipulating:
+            publisher.publish_segments(traj)
+        else:
+            publisher.publish_dict(traj)
 
     env.set_display_function(_display)
     runtime["publisher"] = publisher

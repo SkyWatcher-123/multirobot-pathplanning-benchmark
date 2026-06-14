@@ -180,13 +180,18 @@ def main():
 
         pub = DisplayTrajectoryPublisher()
         duration = pub.replay_duration(traj)
+        manipulating = getattr(env, "manipulating_env", False)
         rospy.loginfo("[mrmg] replaying in RViz (%.1fs per loop)", duration)
         for i in range(max(1, num_replays)):
             if rospy.is_shutdown():
                 break
-            pub.publish_dict(traj)
+            if manipulating:
+                # per-mode publishing so grasped meshes attach/detach in RViz
+                pub.publish_segments(traj)
+            else:
+                pub.publish_dict(traj)
+                rospy.sleep(max(1.0, duration + 1.0))
             rospy.loginfo("[mrmg] replay %d/%d", i + 1, num_replays)
-            rospy.sleep(max(1.0, duration + 1.0))
 
     rospy.loginfo("[mrmg] done")
 

@@ -136,6 +136,19 @@ def segment_path_by_mode(path: Sequence[State]) -> List[Tuple[int, int, Mode]]:
     return segments
 
 
+def _attachment_to_dict(att) -> Dict[str, Any]:
+    """Serialise an Attachment (from moveit_env) into a plain JSON-able dict."""
+    return {
+        "object_id": att.object_id,
+        "link": att.link,
+        "pose": list(att.pose),
+        "mesh": att.mesh,
+        "scale": list(att.scale),
+        "touch_links": list(att.touch_links),
+        "held": bool(att.held),
+    }
+
+
 def to_display_trajectory_dict(
     path: Sequence[State],
     joint_names: Sequence[str],
@@ -145,6 +158,7 @@ def to_display_trajectory_dict(
     split_by_mode: bool = True,
     model_id: str = "",
     extra_metadata: Optional[Dict[str, Any]] = None,
+    attachments_provider=None,
 ) -> Dict[str, Any]:
     """Build a JSON-serialisable dict mirroring ``moveit_msgs/DisplayTrajectory``.
 
@@ -179,6 +193,7 @@ def to_display_trajectory_dict(
 
     robot_trajectories: List[Dict[str, Any]] = []
     segment_meta: List[Dict[str, Any]] = []
+    segment_attachments: List[List[Dict[str, Any]]] = []
     for (s, e, mode) in segments:
         sub_path = list(path[s : e + 1])
         timed = path_to_timed_trajectory(
@@ -203,11 +218,18 @@ def to_display_trajectory_dict(
                 },
             }
         )
+        attached = (
+            [_attachment_to_dict(a) for a in attachments_provider(mode)]
+            if attachments_provider is not None
+            else []
+        )
+        segment_attachments.append(attached)
         segment_meta.append(
             {
                 "task_ids": list(mode.task_ids) if mode is not None else None,
                 "num_points": len(points),
                 "duration": timed.duration,
+                "attached_collision_objects": attached,
             }
         )
 
@@ -223,7 +245,8 @@ def to_display_trajectory_dict(
                 "effort": [],
             },
             "multi_dof_joint_state": {},
-            "attached_collision_objects": [],
+            # Objects attached at the start of the trajectory (the first mode).
+            "attached_collision_objects": segment_attachments[0] if segment_attachments else [],
             "is_diff": False,
         },
         "trajectory": robot_trajectories,
@@ -251,11 +274,17 @@ def load_trajectory_json(filename: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-def build_display_trajectory_msg(traj_dict: Dict[str, Any]):
+def build_display_trajectory_msg(traj_dict: Dict[str, Any], attachment_builder=None):
     """Convert a display-trajectory dict into a ``moveit_msgs/DisplayTrajectory``.
 
     Imported lazily: ``moveit_msgs``/``trajectory_msgs``/``sensor_msgs`` are only
     needed at this point, so the rest of this module works without a ROS install.
+
+    ``attachment_builder`` (optional) is a callable turning an attachment dict
+    into a ``moveit_msgs/AttachedCollisionObject`` (see
+    ``moveit_interface.build_attached_collision_object``); when given, the start
+    state's ``attached_collision_objects`` are populated so grasped meshes show in
+    RViz.
     """
     try:
         from moveit_msgs.msg import DisplayTrajectory, RobotTrajectory, RobotState
@@ -282,6 +311,10 @@ def build_display_trajectory_msg(traj_dict: Dict[str, Any]):
     js.position = list(start["joint_state"]["position"])
     rs.joint_state = js
     rs.is_diff = bool(start.get("is_diff", False))
+    attached = start.get("attached_collision_objects", []) or []
+    if attached and attachment_builder is not None:
+        rs.attached_collision_objects = [attachment_builder(a) for a in attached]
+        rs.is_diff = True
     msg.trajectory_start = rs
 
     for rt_dict in traj_dict["trajectory"]:

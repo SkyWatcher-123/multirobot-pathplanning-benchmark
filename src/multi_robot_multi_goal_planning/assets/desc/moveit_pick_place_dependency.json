@@ -1,0 +1,86 @@
+{
+  "name": "moveit_pick_place_dependency",
+  "base_frame": "world",
+  "anchor_link": "base_link",
+  "velocity": 0.25,
+  "mode_logic": "dependency",
+  "collision": {"tolerance": 0.0, "resolution": 0.05},
+
+  "robots": [
+    {
+      "name": "a1",
+      "group": "arm_1",
+      "joints": ["a1_x", "a1_y"],
+      "start": [-0.8, 0.0],
+      "limits": [[-2.0, -2.0], [2.0, 2.0]],
+      "attach_link": "a1_tool",
+      "touch_links": ["a1_tool", "a1_y_link", "a1_x_link"]
+    },
+    {
+      "name": "a2",
+      "group": "arm_2",
+      "joints": ["a2_x", "a2_y"],
+      "start": [0.8, 0.0],
+      "limits": [[-2.0, -2.0], [2.0, 2.0]],
+      "attach_link": "a2_tool",
+      "touch_links": ["a2_tool", "a2_y_link", "a2_x_link"]
+    }
+  ],
+
+  "collision_objects": [
+    {
+      "id": "center_obstacle",
+      "mesh": "package://mrmg_moveit_planning/meshes/demo/center_box.stl",
+      "frame": "world",
+      "pose": {"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]},
+      "movable": false
+    },
+    {
+      "id": "box1",
+      "mesh": "package://mrmg_moveit_planning/meshes/demo/box.stl",
+      "frame": "world",
+      "pose": {"position": [0.8, -0.8, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]},
+      "movable": true
+    }
+  ],
+
+  "tasks": [
+    {
+      "name": "a1_pick",
+      "robots": ["a1"],
+      "type": "pick",
+      "goal": {"type": "single", "config": [0.8, -0.8]},
+      "attach": {
+        "object": "box1",
+        "link": "a1_tool",
+        "grasp": {"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+      }
+    },
+    {
+      "name": "a1_place",
+      "robots": ["a1"],
+      "type": "place",
+      "goal": {"type": "single", "config": [-0.8, -0.8]},
+      "detach": {
+        "object": "box1",
+        "place": {"position": [-0.8, -0.8, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+      }
+    },
+    {
+      "name": "a2_goal",
+      "robots": ["a2"],
+      "goal": {"type": "single", "config": [0.0, 0.8]}
+    },
+    {
+      "name": "terminal",
+      "robots": ["a1", "a2"],
+      "goal": {"type": "single", "config": [-0.8, -0.8, 0.0, 0.8]}
+    }
+  ],
+
+  "dependencies": [
+    ["a1_place", "a1_pick"],
+    ["terminal", "a1_place"],
+    ["terminal", "a2_goal"]
+  ]
+}

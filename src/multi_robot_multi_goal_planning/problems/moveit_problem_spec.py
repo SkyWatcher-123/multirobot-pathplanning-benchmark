@@ -43,6 +43,15 @@ class MeshObject:
     position: Tuple[float, float, float] = (0.0, 0.0, 0.0)
     orientation: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)  # x,y,z,w
     scale: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    # Movable objects are grasped/placed during planning: instead of being fixed
+    # world geometry, they ride along as attached collision objects whose parent
+    # link changes per mode (world anchor when resting, gripper link when held).
+    movable: bool = False
+
+    @property
+    def pose7(self) -> Tuple[float, ...]:
+        """Initial pose as ``(x, y, z, qx, qy, qz, qw)`` in ``frame``."""
+        return tuple(self.position) + tuple(self.orientation)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "MeshObject":
@@ -57,7 +66,51 @@ class MeshObject:
             position=tuple(float(x) for x in pos),
             orientation=tuple(float(x) for x in ori),
             scale=tuple(float(x) for x in scale),
+            movable=bool(d.get("movable", False)),
         )
+
+
+def _parse_pose7(pose: Optional[Dict[str, Any]]) -> Tuple[float, ...]:
+    """Parse a ``{position: [x,y,z], orientation: [x,y,z,w]}`` dict into a 7-tuple."""
+    pose = pose or {}
+    pos = pose.get("position", [0.0, 0.0, 0.0])
+    ori = pose.get("orientation", [0.0, 0.0, 0.0, 1.0])
+    return tuple(float(x) for x in pos) + tuple(float(x) for x in ori)
+
+
+@dataclass
+class ManipulationInfo:
+    """The attach/detach side effect of completing a task.
+
+    A task's goal pose is reached, and as a side effect a mesh is either grasped
+    (``kind == "pick"``: the object becomes attached to ``link`` with the relative
+    ``pose`` grasp transform) or released (``kind == "place"``: the object is put
+    back into the world at ``pose``). Tasks with no manipulation (plain "goto"
+    goals) simply have ``manipulation is None``.
+    """
+
+    kind: str  # "pick" or "place"
+    obj: str  # mesh id (must be a movable collision object)
+    pose: Tuple[float, ...]  # grasp pose (in link frame) for pick; world pose for place
+    link: Optional[str] = None  # gripper link for pick; None -> world anchor for place
+
+    @classmethod
+    def from_task_dict(cls, t: Dict[str, Any]) -> Optional["ManipulationInfo"]:
+        # Accept either an explicit "attach"/"detach" block, or a "manipulation"
+        # block with an explicit kind. "type": "pick"/"place" is also honoured.
+        if "attach" in t:
+            a = t["attach"]
+            return cls(kind="pick", obj=a["object"], link=a.get("link"),
+                       pose=_parse_pose7(a.get("grasp", a.get("pose"))))
+        if "detach" in t:
+            d = t["detach"]
+            return cls(kind="place", obj=d["object"], link=None,
+                       pose=_parse_pose7(d.get("place", d.get("pose"))))
+        if "manipulation" in t:
+            m = t["manipulation"]
+            return cls(kind=m["kind"], obj=m["object"], link=m.get("link"),
+                       pose=_parse_pose7(m.get("pose")))
+        return None
 
 
 @dataclass
@@ -72,6 +125,9 @@ class RobotSpec:
     upper: Optional[List[float]] = None
     # Optional link a grasped object is attached to (used for manipulation modes).
     attach_link: Optional[str] = None
+    # Links a grasped object is allowed to touch without it counting as a
+    # collision (typically the gripper/end-effector links of this robot).
+    touch_links: List[str] = field(default_factory=list)
 
     @property
     def dim(self) -> int:
@@ -99,6 +155,7 @@ class RobotSpec:
             lower=lower,
             upper=upper,
             attach_link=d.get("attach_link"),
+            touch_links=list(d.get("touch_links", [])),
         )
 
 
@@ -156,11 +213,26 @@ class MoveItProblemSpec:
     collision_resolution: float = 0.05
     velocity: float = 0.25
     name: str = "moveit_problem"
+    # Fixed link that movable objects are anchored to while resting in the world
+    # (the URDF root, pinned to ``base_frame`` by the SRDF virtual joint).
+    anchor_link: str = "base_link"
 
     # ------------------------------------------------------------------ helpers
     @property
     def robot_names(self) -> List[str]:
         return [r.name for r in self.robots]
+
+    @property
+    def movable_objects(self) -> List[MeshObject]:
+        return [o for o in self.collision_objects if o.movable]
+
+    @property
+    def static_objects(self) -> List[MeshObject]:
+        return [o for o in self.collision_objects if not o.movable]
+
+    @property
+    def has_manipulation(self) -> bool:
+        return any(getattr(t, "manipulation", None) is not None for t in self.tasks)
 
     @property
     def robot_dims(self) -> Dict[str, int]:
@@ -211,23 +283,50 @@ class MoveItProblemSpec:
     def from_dict(cls, d: Dict[str, Any]) -> "MoveItProblemSpec":
         robots = [RobotSpec.from_dict(r) for r in d["robots"]]
         robot_dims = {r.name: r.dim for r in robots}
+        attach_links = {r.name: r.attach_link for r in robots}
+
+        collision_objects = [MeshObject.from_dict(o) for o in d.get("collision_objects", [])]
+        movable_ids = {o.id for o in collision_objects if o.movable}
 
         tasks: List[Task] = []
         for t in d["tasks"]:
             involved = list(t["robots"])
             goal = _build_goal(involved, robot_dims, t["goal"])
-            tasks.append(
-                Task(
-                    name=t["name"],
-                    robots=involved,
-                    goal=goal,
-                    type=t.get("type"),
-                    frames=t.get("frames"),
-                    side_effect=t.get("side_effect"),
-                )
-            )
 
-        collision_objects = [MeshObject.from_dict(o) for o in d.get("collision_objects", [])]
+            manip = ManipulationInfo.from_task_dict(t)
+            task_type = t.get("type")
+            frames = t.get("frames")
+            if manip is not None:
+                if manip.obj not in movable_ids:
+                    raise ValueError(
+                        f"task '{t['name']}' attaches/detaches '{manip.obj}', which "
+                        f"is not a movable collision object"
+                    )
+                # Default the grasp link to the (single) involved robot's attach link.
+                if manip.kind == "pick" and manip.link is None:
+                    if len(involved) != 1 or attach_links.get(involved[0]) is None:
+                        raise ValueError(
+                            f"pick task '{t['name']}' needs an attach 'link' (or the "
+                            f"robot must define 'attach_link')"
+                        )
+                    manip.link = attach_links[involved[0]]
+                # Mirror onto Task.type / Task.frames for compatibility with the
+                # benchmark's manipulation conventions ([parent, object]).
+                task_type = task_type or manip.kind
+                if frames is None:
+                    parent = manip.link if manip.kind == "pick" else d.get("anchor_link", "base_link")
+                    frames = [parent, manip.obj]
+
+            task = Task(
+                name=t["name"],
+                robots=involved,
+                goal=goal,
+                type=task_type,
+                frames=frames,
+                side_effect=t.get("side_effect"),
+            )
+            task.manipulation = manip  # consumed by moveit_env.get_scenegraph_info_for_mode
+            tasks.append(task)
 
         col = d.get("collision", {}) or {}
         dependencies = [tuple(e) for e in d.get("dependencies", [])]
@@ -244,6 +343,7 @@ class MoveItProblemSpec:
             collision_resolution=float(col.get("resolution", 0.05)),
             velocity=float(d.get("velocity", 0.25)),
             name=d.get("name", "moveit_problem"),
+            anchor_link=d.get("anchor_link", "base_link"),
         )
 
     @classmethod

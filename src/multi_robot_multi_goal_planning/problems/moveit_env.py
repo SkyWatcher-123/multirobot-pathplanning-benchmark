@@ -60,6 +60,26 @@ from .planning_env import (
 from .moveit_problem_spec import MoveItProblemSpec
 from .registry import register
 
+from dataclasses import dataclass
+
+
+@dataclass
+class Attachment:
+    """A movable mesh attached to a link in a given mode.
+
+    ``pose`` is the object's ``(x,y,z,qx,qy,qz,qw)`` transform in ``link``'s frame.
+    ``held`` is True when attached to a gripper link (grasped) rather than the
+    world anchor link (resting).
+    """
+
+    object_id: str
+    link: str
+    pose: tuple
+    mesh: str
+    scale: tuple
+    touch_links: list
+    held: bool
+
 
 # --------------------------------------------------------------------------- #
 #  Collision checking strategy
@@ -133,6 +153,19 @@ class MoveItEnvironment(BaseProblem):
         self.attach_links = {r.name: r.attach_link for r in spec.robots}
         self.joint_names = spec.joint_names
         self.collision_objects = spec.collision_objects
+        self.anchor_link = spec.anchor_link
+
+        # Manipulation bookkeeping: movable objects ride along as attached
+        # collision objects whose parent link changes per mode.
+        self.movable_objects = {o.id for o in spec.movable_objects}
+        self._movable_specs = {o.id: o for o in spec.movable_objects}
+        # link -> links a grasped object may touch (the carrying gripper links).
+        self._touch_links_by_link: Dict[str, List[str]] = {}
+        for r in spec.robots:
+            if r.attach_link is not None:
+                self._touch_links_by_link[r.attach_link] = (
+                    list(r.touch_links) if r.touch_links else [r.attach_link]
+                )
 
         # Build robot_idx (slice into the flat configuration) in robot order.
         offset = 0
@@ -157,9 +190,15 @@ class MoveItEnvironment(BaseProblem):
         self.cost_metric = "euclidean"
         self.cost_reduction = "max"
 
-        self.manipulating_env = False
+        self.manipulating_env = spec.has_manipulation
         self._current_mode: Optional[Mode] = None
         self._display_fn: Optional[Callable[[List[State]], None]] = None
+
+        # Initial scene graph: every movable object rests at its world pose,
+        # anchored to the fixed root link.
+        self.initial_sg: Dict[str, tuple] = {
+            o.id: (self.anchor_link, tuple(o.pose7)) for o in spec.movable_objects
+        }
 
         self._validity_checker: StateValidityChecker = (
             validity_checker or _UnsetStateValidityChecker()
@@ -169,7 +208,11 @@ class MoveItEnvironment(BaseProblem):
         self.spec = ProblemSpec(
             agent_type=AgentType.MULTI_AGENT if n_robots > 1 else AgentType.SINGLE_AGENT,
             constraints=ConstraintType.UNCONSTRAINED,
-            manipulation=ManipulationType.STATIC,
+            manipulation=(
+                ManipulationType.MANIPULATION
+                if spec.has_manipulation
+                else ManipulationType.STATIC
+            ),
             dependency=(
                 DependencyType.UNORDERED
                 if spec.mode_logic == "dependency"
@@ -272,14 +315,71 @@ class MoveItEnvironment(BaseProblem):
 
     # ------------------------------------------------------------------- modes
     def get_scenegraph_info_for_mode(self, mode: Mode, is_start_mode: bool = False):
-        # Static scenes (the common case for MoveIt collision-checking problems)
-        # have no scene graph. Manipulation problems can override this to return
-        # attach/detach info that the ROS checker turns into AttachedCollisionObjects.
-        return {}
+        """Scene graph for a mode: which movable object is parented to which link.
+
+        For a static scene this is empty. For a manipulation scene each movable
+        object maps to ``(link_name, pose7)`` where ``pose7`` is the object's
+        ``(x,y,z,qx,qy,qz,qw)`` transform in ``link_name``'s frame:
+
+        * resting in the world -> anchored to ``self.anchor_link`` at its world pose;
+        * grasped -> attached to the gripper link with the task's grasp pose.
+
+        The graph is derived incrementally from the previous mode plus the
+        attach/detach side effect of the task that was just completed to enter this
+        mode (mirrors the pinocchio backend, but with explicit poses so no FK is
+        needed here -- the goal pose specifies exactly which mesh attaches and how).
+        """
+        if not self.manipulating_env:
+            return {}
+
+        prev = mode.prev_mode
+        if prev is None or is_start_mode:
+            return dict(self.initial_sg)
+
+        sg = dict(prev.sg)
+        completed_task = self.get_active_task(prev, mode.task_ids)
+        manip = getattr(completed_task, "manipulation", None)
+        if manip is not None:
+            if manip.kind == "pick":
+                sg[manip.obj] = (manip.link, tuple(manip.pose))
+            elif manip.kind == "place":
+                sg[manip.obj] = (self.anchor_link, tuple(manip.pose))
+        return sg
+
+    def attachments_for_mode(self, mode: Optional[Mode]) -> List["Attachment"]:
+        """Resolve a mode's scene graph into concrete attachment descriptors.
+
+        Each entry pairs a movable mesh (geometry/scale from the spec) with the
+        link it is attached to and its relative pose in that mode. Consumed by the
+        ROS checker (to build ``AttachedCollisionObject`` messages) and by the
+        trajectory export (so the carried mesh shows up in RViz).
+        """
+        if not self.manipulating_env or mode is None or not mode.sg:
+            return []
+        out: List[Attachment] = []
+        for obj_id, value in mode.sg.items():
+            link, pose = value[0], value[1]
+            spec = self._movable_specs.get(obj_id)
+            if spec is None:
+                continue
+            held = link != self.anchor_link
+            out.append(
+                Attachment(
+                    object_id=obj_id,
+                    link=link,
+                    pose=tuple(float(x) for x in pose),
+                    mesh=spec.mesh,
+                    scale=tuple(spec.scale),
+                    touch_links=list(self._touch_links_by_link.get(link, [])),
+                    held=held,
+                )
+            )
+        return out
 
     def set_to_mode(self, mode: Mode) -> None:
         # Remember the mode so the checker (and any attached-object handling)
-        # can use it; nothing else to do for a static scene.
+        # can use it; the per-state validity check carries the attachments, so no
+        # global planning-scene mutation is needed here.
         self._current_mode = mode
 
     # ------------------------------------------------------------------ sampling
@@ -317,17 +417,23 @@ class MoveItEnvironment(BaseProblem):
         print(f"[MoveItEnvironment] configuration {np.asarray(q.state()).tolist()}")
 
     def to_display_trajectory(self, path: List[State], split_by_mode: bool = True):
-        """Convert a planned path into a DisplayTrajectory dict (ROS-independent)."""
+        """Convert a planned path into a DisplayTrajectory dict (ROS-independent).
+
+        For manipulation problems the per-mode attachments are embedded so the
+        grasped mesh follows the gripper in RViz.
+        """
         from multi_robot_multi_goal_planning.ros.trajectory_conversion import (
             to_display_trajectory_dict,
         )
 
+        provider = self.attachments_for_mode if self.manipulating_env else None
         return to_display_trajectory_dict(
             path,
             self.joint_names,
             base_frame=self.base_frame,
             velocity=self.velocity,
             split_by_mode=split_by_mode,
+            attachments_provider=provider,
         )
 
     def export_display_trajectory(
@@ -421,6 +527,7 @@ def make_moveit_env_from_file(
 # --------------------------------------------------------------------------- #
 _ASSET_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "desc")
 _DEMO_SPEC = os.path.join(_ASSET_DIR, "moveit_demo_dependency.json")
+_PICK_PLACE_SPEC = os.path.join(_ASSET_DIR, "moveit_pick_place_dependency.json")
 
 
 def _demo_analytic_checker() -> CallableStateValidityChecker:
@@ -452,7 +559,78 @@ def _demo_analytic_checker() -> CallableStateValidityChecker:
     return CallableStateValidityChecker(fn)
 
 
+def _demo_manip_analytic_checker(env: "MoveItEnvironment") -> CallableStateValidityChecker:
+    """Manipulation-aware analytic checker for the headless pick-and-place demo.
+
+    Like :func:`_demo_analytic_checker`, but it reads the mode's scene graph to
+    locate movable objects: a movable object is positioned at its world anchor
+    pose when resting, or follows the gripper (robot position + grasp offset) when
+    held. A movable object collides with the central obstacle and with every robot
+    except the one allowed to grasp it / currently holding it. This exercises the
+    full attach/detach plumbing without a ROS install -- the real scene uses meshes
+    via ``/check_state_validity``.
+    """
+    half = 0.25  # central obstacle half-size (matches center_box.stl)
+    clearance = 0.2
+    link_to_robot = {
+        env.attach_links[r]: r for r in env.robots if env.attach_links[r] is not None
+    }
+    graspable_by = {}
+    for t in env.tasks:
+        manip = getattr(t, "manipulation", None)
+        if manip is not None and manip.kind == "pick" and t.robots:
+            graspable_by[manip.obj] = t.robots[0]
+
+    def _robot_xy(positions, r):
+        idx = env.robot_idx[r]
+        return np.asarray(positions, dtype=float)[idx[0]: idx[-1] + 1][:2]
+
+    def _in_center(xy):
+        return abs(xy[0]) < half and abs(xy[1]) < half
+
+    def fn(joint_names, positions, mode):
+        rpos = {r: _robot_xy(positions, r) for r in env.robots}
+        for xy in rpos.values():
+            if _in_center(xy):
+                return False
+        rs = list(env.robots)
+        for i in range(len(rs)):
+            for j in range(i + 1, len(rs)):
+                if np.linalg.norm(rpos[rs[i]] - rpos[rs[j]]) < clearance:
+                    return False
+
+        sg = mode.sg if mode is not None else {}
+        for obj, value in sg.items():
+            link, pose = value[0], value[1]
+            if link == env.anchor_link:
+                oxy = np.array(pose[:2], dtype=float)
+                holder = None
+            else:
+                holder = link_to_robot.get(link)
+                base = rpos.get(holder, np.zeros(2))
+                oxy = base + np.array(pose[:2], dtype=float)
+            if _in_center(oxy):
+                return False
+            for r, xy in rpos.items():
+                if r == holder or r == graspable_by.get(obj):
+                    continue
+                if np.linalg.norm(oxy - xy) < clearance:
+                    return False
+        return True
+
+    return CallableStateValidityChecker(fn)
+
+
 def _register_demo_envs() -> None:
+    if os.path.exists(_PICK_PLACE_SPEC):
+
+        @register("moveit.pick_place_dependency")
+        class _MoveItPickPlace(MoveItDependencyEnvironment):  # noqa: N801
+            def __init__(self):
+                spec = MoveItProblemSpec.from_file(_PICK_PLACE_SPEC)
+                super().__init__(spec)
+                self.set_validity_checker(_demo_manip_analytic_checker(self))
+
     if not os.path.exists(_DEMO_SPEC):
         return
 

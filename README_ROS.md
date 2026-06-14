@@ -34,6 +34,7 @@ planner does **not** use MoveIt's OMPL pipeline.
 | Task ordering via a **dependency graph** | `mode_logic: dependency` in the problem spec → `DependencyGraphMixin`. A fully-ordered `sequence` is also supported. |
 | Robots are **ROS1 robots with URDF/SRDF** | Robots are referenced by their MoveIt **group** + ordered **joints**; kinematics/limits come from `robot_description` on the param server. |
 | Planning-scene objects are **meshes** (MoveIt collision) | `collision_objects` are meshes added to the MoveIt planning scene via `PlanningSceneInterface.add_mesh`. |
+| **Grasping**: a task's goal specifies which mesh attaches to the end-effector (or none) | `movable` meshes are carried as `AttachedCollisionObject`s during planning: a `pick` task attaches the mesh to the gripper link with the given grasp pose; a `place` task returns it to the world. Collision checks (and RViz) follow the carried mesh. |
 | **Replayable in MoveIt RViz** | The path is published as `moveit_msgs/DisplayTrajectory` on `/move_group/display_planned_path` and exported to JSON for offline replay. |
 | Base planner need not be **OMPL** | Planning is done by the benchmark's own samplers (RRT\* default); move_group is used only for collision checking + scene + RViz. |
 
@@ -117,6 +118,18 @@ Replay the saved plan later (no re-planning):
 roslaunch mrmg_moveit_planning replay.launch file:=$HOME/mrmg_last_trajectory.json
 ```
 
+### Pick-and-place demo (attach / detach)
+
+A second bundled problem has robot `a1` pick up a movable box, carry it around the
+obstacle, and place it — under a dependency graph (`a1_place` depends on
+`a1_pick`). The grasped mesh is attached to the gripper for collision checking and
+follows it in RViz:
+
+```bash
+roslaunch mrmg_moveit_planning plan.launch \
+    problem_spec:=$(rospack find mrmg_moveit_planning)/config/problems/pick_place_dependency.json
+```
+
 ---
 
 ## Using your own robot(s)
@@ -172,6 +185,35 @@ If your MoveIt build rejects an empty group in `/check_state_validity`, pass
 Goal types: `single` (a joint config) and `region`/`box` (`lower`/`upper` bounds).
 Specs may be JSON or YAML.
 
+#### Grasping (attach / detach)
+
+Mark a mesh `"movable": true` and add an `attach`/`detach` block to the task whose
+goal pose performs the grasp/release. The task's goal is the pose at which the
+side effect happens; the block says *which* mesh and *how* it attaches:
+
+```jsonc
+// in collision_objects:
+{"id": "box1", "mesh": "package://pkg/meshes/box.stl",
+ "pose": {"position": [0.5, -0.4, 0.1]}, "movable": true}
+
+// pick task: when robot_a reaches this goal, box1 attaches to its end-effector
+{"name": "pick_box1", "robots": ["robot_a"], "type": "pick",
+ "goal": {"type": "single", "config": [...]},
+ "attach": {"object": "box1", "link": "robot_a_tool",
+            "grasp": {"position": [0,0,0.02], "orientation": [0,0,0,1]}}}
+
+// place task: when reached, box1 is released into the world at this pose
+{"name": "place_box1", "robots": ["robot_a"], "type": "place",
+ "goal": {"type": "single", "config": [...]},
+ "detach": {"object": "box1", "place": {"position": [-0.5, -0.4, 0.1]}}}
+```
+
+`link` defaults to the robot's `attach_link`; set `touch_links` on the robot to
+the gripper links so a held object does not self-collide with the carrying arm.
+Movable objects are *not* added as world geometry — they ride along as attached
+objects (anchored to `anchor_link` while resting), so they are never
+double-counted. A task with no `attach`/`detach` is a plain "goto".
+
 ---
 
 ## How it works
@@ -217,12 +259,17 @@ abstract-environment example runs without any backend.)
 
 ## Notes & limitations
 
-- **Manipulation / attached objects.** The static collision-checking path
-  (objects fixed in the scene, dependency-graph task ordering) is fully supported.
-  For pick/place modes, attach a grasped mesh to the gripper link by setting
-  `MoveItServiceCollisionChecker.attached_objects_for_mode` and overriding
-  `get_scenegraph_info_for_mode`; hooks are in place but the bundled example is
-  static.
+- **Manipulation / attached objects.** Both the static path and pick/place
+  manipulation are supported. During planning, a movable mesh is represented as an
+  `AttachedCollisionObject` whose parent link changes per mode (world anchor when
+  resting, gripper link when held), built from the per-mode scene graph
+  (`MoveItEnvironment.get_scenegraph_info_for_mode` / `attachments_for_mode`) and
+  applied to each `/check_state_validity` request — so the carried mesh is checked
+  against the world and the other robots, and is removed from the world while
+  held. In RViz the plan is replayed segment-by-segment so the grasped mesh
+  attaches and detaches. See `moveit.pick_place_dependency` /
+  `config/problems/pick_place_dependency.json`. The grasp/place poses are taken
+  from the spec (no IK needed in the env).
 - **No live ROS in CI.** This package was developed where ROS is unavailable, so
   the ROS-touching code (`moveit_interface`, the nodes, launch/config) is
   validated by construction and by the import-guards; run `catkin build` + the

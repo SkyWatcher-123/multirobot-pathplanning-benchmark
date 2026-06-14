@@ -229,6 +229,126 @@ def test_ros_glue_imports_without_ros():
             mi.MoveItServiceCollisionChecker()
 
 
+PICK_PLACE = {
+    "name": "pp",
+    "base_frame": "world",
+    "anchor_link": "base_link",
+    "mode_logic": "dependency",
+    "robots": [
+        {"name": "a1", "group": "arm_1", "joints": ["a1_x", "a1_y"], "start": [-0.8, 0.0],
+         "limits": [[-2, -2], [2, 2]], "attach_link": "a1_tool",
+         "touch_links": ["a1_tool", "a1_y_link"]},
+        {"name": "a2", "group": "arm_2", "joints": ["a2_x", "a2_y"], "start": [0.8, 0.0],
+         "limits": [[-2, -2], [2, 2]], "attach_link": "a2_tool"},
+    ],
+    "collision_objects": [
+        {"id": "center_obstacle", "mesh": "package://p/m/center.stl",
+         "pose": {"position": [0, 0, 0]}, "movable": False},
+        {"id": "box1", "mesh": "package://p/m/box.stl",
+         "pose": {"position": [0.8, -0.8, 0]}, "movable": True},
+    ],
+    "tasks": [
+        {"name": "a1_pick", "robots": ["a1"], "type": "pick",
+         "goal": {"type": "single", "config": [0.8, -0.8]},
+         "attach": {"object": "box1", "link": "a1_tool",
+                    "grasp": {"position": [0, 0, 0], "orientation": [0, 0, 0, 1]}}},
+        {"name": "a1_place", "robots": ["a1"], "type": "place",
+         "goal": {"type": "single", "config": [-0.8, -0.8]},
+         "detach": {"object": "box1", "place": {"position": [-0.8, -0.8, 0]}}},
+        {"name": "a2_goal", "robots": ["a2"], "goal": {"type": "single", "config": [0.0, 0.8]}},
+        {"name": "terminal", "robots": ["a1", "a2"],
+         "goal": {"type": "single", "config": [-0.8, -0.8, 0.0, 0.8]}},
+    ],
+    "dependencies": [["a1_place", "a1_pick"], ["terminal", "a1_place"], ["terminal", "a2_goal"]],
+}
+
+
+# --------------------------------------------------- manipulation: spec
+def test_spec_parses_manipulation_and_movable():
+    spec = MoveItProblemSpec.from_dict(PICK_PLACE)
+    assert spec.has_manipulation
+    assert [o.id for o in spec.movable_objects] == ["box1"]
+    assert [o.id for o in spec.static_objects] == ["center_obstacle"]
+
+    pick = next(t for t in spec.tasks if t.name == "a1_pick")
+    place = next(t for t in spec.tasks if t.name == "a1_place")
+    assert pick.manipulation.kind == "pick" and pick.manipulation.obj == "box1"
+    assert pick.manipulation.link == "a1_tool"
+    assert pick.manipulation.pose[:3] == (0.0, 0.0, 0.0)
+    assert place.manipulation.kind == "place"
+    assert place.manipulation.pose[:3] == (-0.8, -0.8, 0.0)
+    # a plain goal task has no manipulation
+    assert next(t for t in spec.tasks if t.name == "a2_goal").manipulation is None
+
+
+def test_spec_rejects_attach_of_non_movable():
+    bad = json.loads(json.dumps(PICK_PLACE))
+    bad["tasks"][0]["attach"]["object"] = "center_obstacle"  # not movable
+    with pytest.raises(ValueError):
+        MoveItProblemSpec.from_dict(bad)
+
+
+# --------------------------------------------------- manipulation: env / sg
+def test_env_scene_graph_attaches_and_detaches():
+    env = get_env_by_name("moveit.pick_place_dependency")
+    assert env.manipulating_env
+    assert env.movable_objects == {"box1"}
+    # start: box1 rests at the world anchor
+    link, pose = env.start_mode.sg["box1"]
+    assert link == env.anchor_link
+    assert tuple(pose[:3]) == (0.8, -0.8, 0.0)
+
+    # walk the planned mode chain and check attach -> detach
+    path, _ = _plan(env, seed=0, t=10.0)
+    assert path is not None and env.is_valid_plan(path)
+    states = {}
+    for s in path:
+        states[tuple(s.mode.task_ids)] = s.mode.sg["box1"]
+    # while a1 carries it (doing a1_place), box1 is attached to the gripper
+    carry = states[(1, 3)]
+    assert carry[0] == "a1_tool" and bool_held(env, carry)
+    # at the end it has been placed back into the world
+    placed = states[(3, 3)]
+    assert placed[0] == env.anchor_link and tuple(placed[1][:3]) == (-0.8, -0.8, 0.0)
+
+
+def bool_held(env, sg_value):
+    return sg_value[0] != env.anchor_link
+
+
+def test_attachments_for_mode_descriptors():
+    env = get_env_by_name("moveit.pick_place_dependency")
+    # find a held mode by advancing the scene graph manually via the planner
+    path, _ = _plan(env, seed=0, t=10.0)
+    held_state = next(s for s in path if s.mode.sg["box1"][0] == "a1_tool")
+    atts = env.attachments_for_mode(held_state.mode)
+    assert len(atts) == 1
+    a = atts[0]
+    assert a.object_id == "box1" and a.link == "a1_tool" and a.held is True
+    assert a.touch_links  # carrying arm links so it doesn't self-collide
+    assert a.mesh.endswith("box.stl")
+
+
+def test_pick_place_trajectory_embeds_attachments():
+    env = get_env_by_name("moveit.pick_place_dependency")
+    path, _ = _plan(env, seed=0, t=10.0)
+    traj = env.to_display_trajectory(path, split_by_mode=True)
+    segs = traj["metadata"]["segments"]
+    # at least one segment has box1 held by the gripper
+    held = [
+        a
+        for seg in segs
+        for a in seg["attached_collision_objects"]
+        if a["object_id"] == "box1" and a["held"]
+    ]
+    assert held, "expected box1 to be attached to the gripper in some segment"
+    assert held[0]["link"] == "a1_tool"
+    # every segment lists box1 (resting or held)
+    for seg in segs:
+        ids = {a["object_id"] for a in seg["attached_collision_objects"]}
+        assert "box1" in ids
+
+
 def test_build_display_trajectory_msg_requires_ros():
     # Without moveit_msgs available, building the real ROS message raises a clear
     # ImportError (the dict form above is what tests rely on).
